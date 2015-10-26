@@ -19,25 +19,21 @@
 #
 ##############################################################################
 
-from osv import osv, fields
-import web
 import base64
-import tools
-from tools.translate import _
-from tools.misc import get_iso_codes
-import pooler
 from datetime import datetime
-import decimal_precision as dp
+from openerp.osv import osv, fields
+from openerp.tools.translate import _
+from openerp import pooler
 
 
-class exportsage(osv.osv):
+class exportsage(osv.osv_memory):
 
     """
     Wizard 
     """
     _name = "exportsage"
     _description = "Create imp file  to export  in sage50"
-    _inherit = "ir.wizard.screen"
+
     _columns = {
         'data': fields.binary('File', readonly=True),
         'name': fields.char('Filename', 20, readonly=True),
@@ -52,6 +48,7 @@ class exportsage(osv.osv):
     _defaults = {
         'state': lambda *a: 'choose',
     }
+
     def act_cancel(self, cr, uid, ids, context=None):
         #self.unlink(cr, uid, ids, context)
         return {'type':'ir.actions.act_window_close' }
