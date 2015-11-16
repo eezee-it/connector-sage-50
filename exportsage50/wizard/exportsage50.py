@@ -19,79 +19,65 @@
 #
 ##############################################################################
 
-from osv import osv, fields
-import web
 import base64
-import tools
-from tools.translate import _
-from tools.misc import get_iso_codes
-import pooler
 from datetime import datetime
-import decimal_precision as dp
+from openerp import models, fields, api
+from openerp.tools.translate import _
 
 
-class exportsage(osv.osv):
+class exportsage(models.TransientModel):
 
     """
     Wizard 
     """
     _name = "exportsage"
     _description = "Create imp file  to export  in sage50"
-    _inherit = "ir.wizard.screen"
-    _columns = {
-        'data': fields.binary('File', readonly=True),
-        'name': fields.char('Filename', 20, readonly=True),
-        'format': fields.char('File Format', 10),
-        'state': fields.selection([('choose', 'choose'), # choose date
-                                   ('get', 'get')]),
-        'invoice_ids': fields.many2many('account.invoice', 'sale_order_invoice_export_rel', 'order_id', 'invoice_id',
-                                        'Invoices', required=True,
-                                        help="This is the list of invoices that have been generated for this sales order. The same sales order may have been invoiced in several times (by line for example)."),
-    }
 
-    _defaults = {
-        'state': lambda *a: 'choose',
-    }
-    def act_cancel(self, cr, uid, ids, context=None):
-        #self.unlink(cr, uid, ids, context)
+
+    def _get_options(self):
+        return [('choose', 'choose'), ('get', 'get')]
+
+    data = fields.Binary(string='File')
+    name = fields.Char(string='Filename', size=20)
+    format = fields.Char(string='File Format', size=10)
+    state = fields.Selection(_get_options, string="State", default='choose')
+    invoice_ids = fields.Many2many('account.invoice', 'sale_order_invoice_export_rel', 'order_id', 'invoice_id',
+                                    'Invoices', required=True,
+                                    help="This is the list of invoices that have been generated for this sales order. The same sales order may have been invoiced in several times (by line for example).")
+
+    @api.multi
+    def act_cancel(self):
         return {'type':'ir.actions.act_window_close' }
 
-
+    @api.multi
     def act_destroy(self, *args):
         return {'type':'ir.actions.act_window_close' }   
 
- 
-    def create_report(self, cr, uid, ids, context=None):
-        if context == None:
-            context = {}
-        this = self.browse(cr, uid, ids)[0]
-        data = self.read(cr, uid, ids, [], context=context)[0]
+    @api.multi
+    def create_report(self):
 
-        if not data['invoice_ids']:
-            raise osv.except_osv(_('Error'), _('You have to select at least 1 Invoice. And try again'))
+        if not self.invoice_ids:
+            raise Warning(_('Error'), _('You have to select at least 1 Invoice. And try again'))
 
         output = '<Version>''\n' + '"12001"' + ',' + '"1"''\n' + '</Version>\n\n'
-        #Faire le traitement des autres lignes dans les lignes de factures
-        pool = pooler.get_pool(cr.dbname)
-        line_obj = pool.get('account.invoice')
 
-        for line in line_obj.browse(cr, uid, data['invoice_ids'], context):
+        for line in self.invoice_ids:
             # tag de debut pour les lignes de factures
             output += '<SalInvoice>''\n'
             #informations sur le client
             costumer_name = line.partner_id.name
             oneTimefield = ""
-            contact_name = line.partner_id.address[0].name or ""
-            street1 = line.partner_id.address[0].street or ""
-            street2 = line.partner_id.address[0].street2 or ""
-            city = line.partner_id.address[0].city or ""
-            province_state = line.partner_id.address[0].state_id.name or ""
-            zip_code = line.partner_id.address[0].zip or ""
-            country = line.partner_id.address[0].country_id.name or ""
-            phone1 = line.partner_id.address[0].phone or ""
-            mobile = line.partner_id.address[0].mobile or ""
-            fax = line.partner_id.address[0].fax or ""
-            email = line.partner_id.address[0].email or ""
+            contact_name = line.partner_id.name or ""
+            street1 = line.partner_id.street or ""
+            street2 = line.partner_id.street2 or ""
+            city = line.partner_id.city or ""
+            province_state = line.partner_id.state_id.name or ""
+            zip_code = line.partner_id.zip or ""
+            country = line.partner_id.country_id.name or ""
+            phone1 = line.partner_id.phone or ""
+            mobile = line.partner_id.mobile or ""
+            fax = line.partner_id.fax or ""
+            email = line.partner_id.email or ""
             # ligne de client
             fields = [costumer_name, oneTimefield, contact_name, street1, street2,
                       city, province_state, zip_code, country, phone1, mobile, fax, email
@@ -121,8 +107,8 @@ class exportsage(osv.osv):
                     list_id.append(oneId.id)
                 lastId = max(list_id)
                 # acceder à partir du dernier paiement à l'objet account_move_line
-                account_move_line_obj = self.pool.get('account.move.line')
-                account_move_line = account_move_line_obj.browse(cr, uid, lastId, context=context)
+                account_move_line_obj = self.env['account.move.line']
+                account_move_line = account_move_line_obj.browse(lastId)
                 paiement_type = account_move_line.journal_id.type
                 if paiement_type == 'cash':
                     paid_by_type = str(1)
@@ -144,16 +130,16 @@ class exportsage(osv.osv):
             output += sale_invoice.encode('UTF-8') + '\n'
             product_line_invoice_with_taxe = ""
             #Sale invoice detail lines
-            account_invoice_line_obj =self.pool.get('account.invoice.line')
-            product_ids = account_invoice_line_obj.search(cr, uid, [('invoice_id','=',line.id)])
+            account_invoice_line_obj = self.env['account.invoice.line']
+            product_ids = account_invoice_line_obj.search([('invoice_id', '=', line.id)])
 
             if product_ids:
-                for product in account_invoice_line_obj.browse(cr, uid, product_ids):
+                for product in product_ids:
                     item_number = str(product.name)
                     quantity = str(product.quantity)
                     price = str(product.price_unit)
                     amount = product.quantity * product.price_unit
-                    amount = str(round(amount, self.pool.get('decimal.precision').precision_get(cr, uid, 'Account')))
+                    amount = str(round(amount, self.env['decimal.precision'].precision_get('Account')))
                     fields_one_product_invoice = [item_number, quantity, price, amount]
                     one_product_invoice = ','.join(['"%s"' % field_one_product_invoice for field_one_product_invoice in fields_one_product_invoice])
                     #one_product_invoice = '"' + item_number + '"' + ',"' + quantity + '"' + ',"' + price + '"' + ',"' + amount + '"'
@@ -185,12 +171,22 @@ class exportsage(osv.osv):
             #output += '</SalInvoice>\n'
             output += '</SalInvoice>\n\n\n'
         #output += '\n' + this.start_date + ',' + this.end_date
-        this.format = 'imp'
+        format = 'imp'
         filename = 'export_to_sage50'
-        this.name = "%s.%s" % (filename, this.format)
+        name = "%s.%s" % (filename, format)
         out = base64.encodestring(output)
-        self.write(cr, uid, ids, {'state':'get', 'data':out, 'name':this.name, 'format' : this.format}, context=context)
-        
-exportsage()
+        self.write({'state': 'get', 'data': out, 'name': name, 'format': format})
+
+        return {
+            'type': 'ir.actions.act_window',
+            'name': 'Export to Sage50',
+            'res_model': 'exportsage',
+            'view_mode': 'form',
+            'view_type': 'form',
+            'res_id': self.id,
+            'views': [(False, 'form')],
+            'target': 'new',
+             }
+
 
 # vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:
